@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Omni Filteration
 Description: Store pickup and delivery management with invoice integration
-Version: 2.3
+Version: 3.2
 Author: EchoPx
 */
 
@@ -50,7 +50,94 @@ function omni_filteration_init_menu()
 }
 
 // ================================================================
-// INJECT DELIVERY METHOD DROPDOWN BEFORE VOUCHER INPUT
+// HIDE BILLING ADDRESS IN ORDER OVERVIEW PAGE
+// ================================================================
+
+hooks()->add_action('app_customers_head', 'omni_hide_billing_address_in_overview');
+
+function omni_hide_billing_address_in_overview()
+{
+    $current_url = $_SERVER['REQUEST_URI'];
+    
+    // Only apply on view_overview page
+    if (strpos($current_url, 'view_overview') === false && 
+        strpos($current_url, 'omni_sales_client/view_overview') === false) {
+        return;
+    }
+    
+    ?>
+    <style>
+        /* Hide billing address section in order overview page */
+        .billing-address-section,
+        .panel-body .col-md-6:has(h4:contains("Billing Address")),
+        .panel-body .col-md-6:has(strong:contains("Billing Address")),
+        div[class*="col-"]:has(h4:contains("Billing Address")),
+        div[class*="col-"]:has(strong:contains("Billing Address")) {
+            display: none !important;
+            visibility: hidden !important;
+        }
+    </style>
+    
+    <script>
+    (function() {
+        'use strict';
+        
+        console.log('🔒 Omni: Hiding billing address in order overview');
+        
+        function waitForDOM(callback) {
+            if (document.body && document.readyState !== 'loading') {
+                callback();
+            } else {
+                setTimeout(function() { waitForDOM(callback); }, 100);
+            }
+        }
+        
+        function hideBillingAddress() {
+            if (!document.body) {
+                return false;
+            }
+            
+            var headings = document.querySelectorAll('h4, h3, h5, strong, b, label');
+            var billingSection = null;
+            
+            for (var i = 0; i < headings.length; i++) {
+                var heading = headings[i];
+                var text = heading.textContent.trim().toLowerCase();
+                
+                if (text.indexOf('billing') !== -1 && text.indexOf('address') !== -1) {
+                    billingSection = heading.closest('.col-md-6, .col-md-4, .col-sm-6, div[class*="col-"]');
+                    
+                    if (!billingSection) {
+                        billingSection = heading.parentElement;
+                    }
+                    
+                    if (billingSection) {
+                        billingSection.style.display = 'none';
+                        billingSection.style.visibility = 'hidden';
+                        billingSection.classList.add('omni-hidden-billing');
+                        console.log('   ✅ Hidden billing address section');
+                        return true;
+                    }
+                }
+            }
+            
+            return false;
+        }
+        
+        waitForDOM(function() {
+            hideBillingAddress();
+            setTimeout(hideBillingAddress, 300);
+            setTimeout(hideBillingAddress, 600);
+            setTimeout(hideBillingAddress, 1000);
+            setTimeout(hideBillingAddress, 1500);
+        });
+    })();
+    </script>
+    <?php
+}
+
+// ================================================================
+// INJECT DELIVERY METHOD NEXT TO ADDRESSES (WITH REPLACEMENT LOGIC)
 // ================================================================
 
 hooks()->add_action('app_customers_head', 'omni_filteration_inject_dropdown');
@@ -62,38 +149,49 @@ function omni_filteration_inject_dropdown()
         return;
     }
     
-    // Get store address from database
     $CI = &get_instance();
     $store_address = $CI->db->get(db_prefix() . 'omni_store_address')->row();
     
     ?>
     <style>
-        /* Delivery Method Dropdown */
-        .delivery-method-wrapper {
-            margin-bottom: 25px;
-            padding: 20px;
-            background: #f8f9fa;
+        /* Delivery method box styling */
+        .omni-delivery-method-box {
+            background: #ffffff;
             border: 1px solid #e0e0e0;
             border-radius: 8px;
+            padding: 20px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
         }
         
-        .delivery-method-wrapper label {
+        .omni-delivery-method-box h4 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 16px;
             font-weight: 600;
             color: #333;
-            font-size: 15px;
-            margin-bottom: 10px;
+        }
+        
+        .omni-delivery-method-box .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .omni-delivery-method-box label {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 8px;
             display: block;
         }
         
-        .delivery-method-wrapper label .required {
+        .omni-delivery-method-box label .required {
             color: #e74c3c;
             margin-left: 3px;
         }
         
-        .delivery-method-wrapper select {
+        .omni-delivery-method-box select {
             width: 100%;
-            padding: 12px 15px;
+            padding: 10px 12px;
             font-size: 14px;
             border: 1px solid #ddd;
             border-radius: 6px;
@@ -103,34 +201,19 @@ function omni_filteration_inject_dropdown()
             cursor: pointer;
         }
         
-        .delivery-method-wrapper select:focus {
+        .omni-delivery-method-box select:focus {
             outline: none;
             border-color: #4CAF50;
             box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1);
         }
         
-        .delivery-method-wrapper select:hover {
+        .omni-delivery-method-box select:hover {
             border-color: #4CAF50;
         }
         
         .delivery-method-icon {
             margin-right: 8px;
             color: #4CAF50;
-        }
-        
-        @media (max-width: 768px) {
-            .delivery-method-wrapper {
-                padding: 15px;
-            }
-            
-            .delivery-method-wrapper label {
-                font-size: 14px;
-            }
-            
-            .delivery-method-wrapper select {
-                padding: 10px 12px;
-                font-size: 13px;
-            }
         }
     </style>
     
@@ -142,77 +225,79 @@ function omni_filteration_inject_dropdown()
         (function() {
             'use strict';
             
-            console.log('Omni Filteration: Starting initialization...');
-            console.log('AJAX URL:', OMNI_AJAX_URL);
-            console.log('Client ID:', OMNI_CLIENT_ID);
+            console.log('📦 Omni: Initializing delivery method dropdown');
             
-            // Store original shipping HTML globally
             window.omniOriginalShippingHTML = null;
             window.omniOriginalShippingParent = null;
             
             function injectDeliveryDropdown() {
-                if (document.querySelector('.delivery-method-wrapper')) {
-                    console.log('Omni Filteration: Dropdown already exists, skipping...');
+                if (document.querySelector('.omni-delivery-method-box')) {
+                    console.log('   Already injected');
                     return true;
                 }
                 
-                var voucherInput = document.querySelector('input[name="voucher"]');
+                // Find the Store Address or Shipping Address section
+                var storeAddressSection = null;
+                var headings = document.querySelectorAll('h4, h3, h5, strong');
                 
-                if (!voucherInput) {
-                    voucherInput = document.querySelector('input[name="voucher"].form-control');
+                for (var i = 0; i < headings.length; i++) {
+                    var text = headings[i].textContent.trim().toLowerCase();
+                    
+                    if ((text.indexOf('store') !== -1 || text.indexOf('shipping')) && text.indexOf('address') !== -1) {
+                        storeAddressSection = headings[i].closest('.col-md-6, .col-md-4, .col-sm-6, div[class*="col-"]');
+                        console.log('   ✓ Found address section');
+                        break;
+                    }
                 }
                 
-                if (!voucherInput) {
-                    var allInputs = document.querySelectorAll('input.form-control');
-                    for (var i = 0; i < allInputs.length; i++) {
-                        var input = allInputs[i];
-                        var placeholder = input.getAttribute('placeholder') || '';
-                        var label = input.previousElementSibling;
-                        var labelText = label ? label.textContent.toLowerCase() : '';
+                if (!storeAddressSection) {
+                    // Fallback: look for Customer details
+                    for (var j = 0; j < headings.length; j++) {
+                        var text2 = headings[j].textContent.trim().toLowerCase();
                         
-                        if (placeholder.toLowerCase().indexOf('voucher') !== -1 || 
-                            labelText.indexOf('voucher') !== -1) {
-                            voucherInput = input;
-                            console.log('Omni Filteration: Found voucher input by placeholder/label');
+                        if (text2.indexOf('customer') !== -1 && text2.indexOf('detail') !== -1) {
+                            storeAddressSection = headings[j].closest('.col-md-6, .col-md-4, .col-sm-6, div[class*="col-"]');
+                            console.log('   ✓ Found Customer details section');
                             break;
                         }
                     }
                 }
                 
-                if (!voucherInput) {
-                    console.log('Omni Filteration: Voucher input not found, will retry...');
+                if (!storeAddressSection) {
+                    console.log('   ❌ Could not find insertion point');
                     return false;
                 }
                 
-                var targetElement = voucherInput.parentElement;
+                // Get the column class
+                var colClass = storeAddressSection.className.match(/col-md-\d+|col-sm-\d+/);
+                var columnClass = colClass ? colClass[0] : 'col-md-6';
                 
-                if (targetElement.classList.contains('col-md-12') || 
-                    targetElement.classList.contains('col-md-6')) {
-                    targetElement = voucherInput.closest('.col-md-12, .col-md-6, .form-group');
-                }
-                
-                if (!targetElement) {
-                    targetElement = voucherInput;
-                }
-                
-                var dropdownHTML = `
-                    <div class="delivery-method-wrapper" id="delivery-method-container">
-                        <label for="delivery_method">
-                            <i class="fa fa-truck delivery-method-icon"></i>
-                            Delivery Method
-                            <span class="required">*</span>
-                        </label>
-                        <select id="delivery_method" name="delivery_method" class="form-control" required>
-                            <option value="">-- Select Delivery Method --</option>
-                            <option value="home_delivery">🏠 Home Delivery</option>
-                            <option value="store_pickup">🏪 Store Pickup</option>
-                        </select>
+                // Create delivery method box
+                var deliveryMethodHTML = `
+                    <div class="${columnClass} omni-delivery-column">
+                        <div class="omni-delivery-method-box">
+                            <h4>
+                                <i class="fa fa-truck delivery-method-icon"></i>
+                                Delivery Method
+                            </h4>
+                            <div class="form-group">
+                                <label for="delivery_method">
+                                    Select Method
+                                    <span class="required">*</span>
+                                </label>
+                                <select id="delivery_method" name="delivery_method" class="form-control" required>
+                                    <option value="">-- Select --</option>
+                                    <option value="home_delivery">🏠 Home Delivery</option>
+                                    <option value="store_pickup">🏪 Store Pickup</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 `;
                 
-                targetElement.insertAdjacentHTML('beforebegin', dropdownHTML);
-                
-                console.log('Omni Filteration: Delivery dropdown injected successfully');
+                // Insert AFTER the address section
+                storeAddressSection.insertAdjacentHTML('afterend', deliveryMethodHTML);
+                console.log('   ✅ Delivery method box inserted');
                 
                 setupDropdownListener();
                 
@@ -223,29 +308,25 @@ function omni_filteration_inject_dropdown()
                 var dropdown = document.getElementById('delivery_method');
                 
                 if (!dropdown) {
-                    console.log('Omni Filteration: Dropdown not found for event listener');
                     return;
                 }
                 
                 dropdown.addEventListener('change', function() {
                     var selectedMethod = this.value;
-                    console.log('Omni Filteration: Delivery method selected:', selectedMethod);
                     
-                    // Store in localStorage
+                    console.log('   Selected:', selectedMethod);
+                    
                     if (typeof Storage !== 'undefined') {
                         localStorage.setItem('omni_delivery_method', selectedMethod);
-                        console.log('Omni Filteration: Saved to localStorage');
                     }
                     
-                    // Handle address display based on selection
+                    // HANDLE ADDRESS REPLACEMENT
                     handleAddressDisplay(selectedMethod);
                     
-                    // Save to database
                     if (selectedMethod === 'store_pickup' || selectedMethod === 'home_delivery') {
                         saveDeliveryMethodToDatabase(selectedMethod);
                     }
                     
-                    // Store in hidden input
                     var existingInput = document.getElementById('hidden_delivery_method');
                     if (existingInput) {
                         existingInput.value = selectedMethod;
@@ -264,7 +345,6 @@ function omni_filteration_inject_dropdown()
                         }
                     }
                     
-                    // Visual feedback
                     dropdown.style.borderColor = '#4CAF50';
                     dropdown.style.backgroundColor = '#f0fff4';
                     
@@ -274,15 +354,13 @@ function omni_filteration_inject_dropdown()
                     }, 1000);
                 });
                 
-                // Restore previous selection
+                // Restore saved delivery method
                 if (typeof Storage !== 'undefined') {
                     var savedMethod = localStorage.getItem('omni_delivery_method');
                     if (savedMethod) {
                         dropdown.value = savedMethod;
-                        console.log('Omni Filteration: Restored saved delivery method:', savedMethod);
                         handleAddressDisplay(savedMethod);
                         
-                        // Also save to database on page load
                         setTimeout(function() {
                             saveDeliveryMethodToDatabase(savedMethod);
                         }, 1000);
@@ -291,24 +369,25 @@ function omni_filteration_inject_dropdown()
             }
             
             function handleAddressDisplay(method) {
+                console.log('   Handling address display for:', method);
+                
                 var shippingSection = findShippingAddressSection();
                 
                 if (!shippingSection) {
-                    console.log('Omni Filteration: Shipping section not found');
+                    console.log('   ⚠ Shipping section not found');
                     return;
                 }
                 
                 if (method === 'store_pickup') {
                     replaceShippingWithStore(shippingSection);
-                    console.log('Omni Filteration: Replaced shipping with store address');
                 } else if (method === 'home_delivery') {
                     restoreOriginalShipping();
-                    console.log('Omni Filteration: Restored original shipping address');
                 }
             }
             
             function findShippingAddressSection() {
                 var headings = document.querySelectorAll('h4, h3, .panel-heading, strong');
+                
                 for (var i = 0; i < headings.length; i++) {
                     var heading = headings[i];
                     var text = heading.textContent.trim().toLowerCase();
@@ -316,45 +395,37 @@ function omni_filteration_inject_dropdown()
                     if (text.indexOf('shipping') !== -1 && text.indexOf('address') !== -1) {
                         var section = heading.closest('.col-md-4, .col-md-6, .panel, div[class*="col-"]');
                         if (section) {
-                            console.log('Omni Filteration: Found shipping section by heading');
+                            console.log('   ✓ Found shipping address section');
                             return section;
                         }
                     }
                 }
                 
+                // Also try icons
                 var icons = document.querySelectorAll('.fa-truck, .fa-shipping-fast');
                 for (var j = 0; j < icons.length; j++) {
                     var icon = icons[j];
                     var section = icon.closest('.col-md-4, .col-md-6, .panel, div[class*="col-"]');
                     if (section) {
-                        console.log('Omni Filteration: Found shipping section by icon');
+                        console.log('   ✓ Found shipping section via icon');
                         return section;
                     }
                 }
                 
-                var shippingElements = document.querySelectorAll('[class*="shipping"]');
-                if (shippingElements.length > 0) {
-                    var section = shippingElements[0].closest('.col-md-4, .col-md-6, .panel, div[class*="col-"]');
-                    if (section) {
-                        console.log('Omni Filteration: Found shipping section by class');
-                        return section;
-                    }
-                }
-                
-                console.log('Omni Filteration: Shipping section not found');
                 return null;
             }
             
             function replaceShippingWithStore(shippingSection) {
                 if (!OMNI_STORE_ADDRESS) {
-                    console.log('Omni Filteration: Store address not configured');
+                    console.log('   ⚠ No store address configured');
                     return;
                 }
                 
+                // Save original HTML if not already saved
                 if (!window.omniOriginalShippingHTML) {
                     window.omniOriginalShippingHTML = shippingSection.outerHTML;
                     window.omniOriginalShippingParent = shippingSection.parentNode;
-                    console.log('Omni Filteration: Stored original shipping HTML');
+                    console.log('   ✓ Saved original shipping HTML');
                 }
                 
                 var originalClasses = shippingSection.className || 'col-md-4';
@@ -377,6 +448,7 @@ function omni_filteration_inject_dropdown()
                 `;
                 
                 shippingSection.outerHTML = storeAddressHTML;
+                console.log('   ✅ Replaced shipping with store address');
             }
             
             function restoreOriginalShipping() {
@@ -384,18 +456,12 @@ function omni_filteration_inject_dropdown()
                 
                 if (storeAddressReplacement && window.omniOriginalShippingHTML) {
                     storeAddressReplacement.outerHTML = window.omniOriginalShippingHTML;
-                    console.log('Omni Filteration: Restored original shipping section');
+                    console.log('   ✅ Restored original shipping address');
                 }
             }
             
             function saveDeliveryMethodToDatabase(method) {
-                console.log('Omni Filteration: Attempting to save to database...');
-                console.log('Method:', method);
-                console.log('Client ID:', OMNI_CLIENT_ID);
-                console.log('URL:', OMNI_AJAX_URL);
-                
                 if (!OMNI_CLIENT_ID || OMNI_CLIENT_ID == 0) {
-                    console.error('Omni Filteration: No client ID available');
                     return;
                 }
                 
@@ -408,32 +474,21 @@ function omni_filteration_inject_dropdown()
                     formData.append(csrfToken.name, csrfToken.value);
                 }
                 
-                console.log('Omni Filteration: Sending AJAX request...');
-                
                 fetch(OMNI_AJAX_URL, {
                     method: 'POST',
                     body: formData,
                     credentials: 'same-origin'
                 })
                 .then(function(response) {
-                    console.log('Omni Filteration: Response status:', response.status);
                     return response.json();
                 })
                 .then(function(data) {
-                    console.log('Omni Filteration: Response data:', data);
-                    
                     if (data.success) {
-                        console.log('✅ Omni Filteration: Delivery method saved successfully to database');
-                        console.log('Saved data:', data.data);
-                    } else {
-                        console.error('❌ Omni Filteration: Failed to save:', data.message);
-                        if (data.debug) {
-                            console.error('Debug info:', data.debug);
-                        }
+                        console.log('   ✅ Delivery method saved to database');
                     }
                 })
                 .catch(function(error) {
-                    console.error('❌ Omni Filteration: AJAX error:', error);
+                    console.error('   ❌ AJAX error:', error);
                 });
             }
             
@@ -455,6 +510,14 @@ function omni_filteration_inject_dropdown()
                 });
             }
             
+            function waitForDOM(callback) {
+                if (document.body && document.readyState !== 'loading') {
+                    callback();
+                } else {
+                    setTimeout(function() { waitForDOM(callback); }, 100);
+                }
+            }
+            
             function initDeliveryDropdown() {
                 var success = injectDeliveryDropdown();
                 if (success) {
@@ -462,154 +525,20 @@ function omni_filteration_inject_dropdown()
                 }
             }
             
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', initDeliveryDropdown);
-            } else {
+            waitForDOM(function() {
                 initDeliveryDropdown();
-            }
-            
-            setTimeout(initDeliveryDropdown, 500);
-            setTimeout(initDeliveryDropdown, 1000);
-            setTimeout(initDeliveryDropdown, 1500);
-            
-            if (window.MutationObserver && document.body) {
-                var observer = new MutationObserver(function(mutations) {
-                    var shouldRun = false;
-                    
-                    mutations.forEach(function(mutation) {
-                        if (mutation.addedNodes.length > 0) {
-                            mutation.addedNodes.forEach(function(node) {
-                                if (node.nodeType === 1) {
-                                    if (node.tagName === 'INPUT' && node.getAttribute && node.getAttribute('name') === 'voucher') {
-                                        shouldRun = true;
-                                    }
-                                    if (node.querySelector) {
-                                        var voucherNode = node.querySelector('input[name="voucher"]');
-                                        if (voucherNode) {
-                                            shouldRun = true;
-                                        }
-                                    }
-                                }
-                            });
-                        }
-                    });
-                    
-                    if (shouldRun && !document.querySelector('.delivery-method-wrapper')) {
-                        setTimeout(initDeliveryDropdown, 200);
-                    }
-                });
                 
-                try {
-                    observer.observe(document.body, {
-                        childList: true,
-                        subtree: true
-                    });
-                    console.log('Omni Filteration: MutationObserver initialized');
-                } catch (e) {
-                    console.error('Omni Filteration: Failed to initialize observer:', e);
-                }
-            }
-            
-            console.log('Omni Filteration: Initialization complete');
+                setTimeout(initDeliveryDropdown, 500);
+                setTimeout(initDeliveryDropdown, 1000);
+                setTimeout(initDeliveryDropdown, 1500);
+            });
         })();
     </script>
     <?php
 }
 
 // ================================================================
-// CHANGE "SHIP TO" LABEL TO "PICKUP AT" FOR STORE PICKUP
-// ================================================================
-
-hooks()->add_action('app_admin_head', 'omni_inject_invoice_label_changer');
-hooks()->add_action('app_customers_head', 'omni_inject_invoice_label_changer');
-
-function omni_inject_invoice_label_changer()
-{
-    $current_url = $_SERVER['REQUEST_URI'];
-    if (strpos($current_url, 'invoice') === false && strpos($current_url, 'invoicehtml') === false) {
-        return;
-    }
-    
-    $CI = &get_instance();
-    
-    $invoice_id = null;
-    if (preg_match('/invoice\/(\d+)/', $current_url, $matches)) {
-        $invoice_id = $matches[1];
-    } elseif (preg_match('/invoicehtml\/(\d+)/', $current_url, $matches)) {
-        $invoice_id = $matches[1];
-    } elseif ($CI->input->get('id')) {
-        $invoice_id = $CI->input->get('id');
-    }
-    
-    if (!$invoice_id) {
-        return;
-    }
-    
-    $CI->db->select('clientid');
-    $CI->db->where('id', $invoice_id);
-    $invoice = $CI->db->get(db_prefix() . 'invoices')->row();
-    
-    if (!$invoice) {
-        return;
-    }
-    
-    $CI->db->where('client_id', $invoice->clientid);
-    $CI->db->where('delivery_method', 'store_pickup');
-    $delivery = $CI->db->get(db_prefix() . 'omni_student_delivery')->row();
-    
-    if (!$delivery) {
-        return;
-    }
-    
-    ?>
-    <script>
-    (function() {
-        'use strict';
-        
-        function changeShipToLabel() {
-            var walker = document.createTreeWalker(
-                document.body,
-                NodeFilter.SHOW_TEXT,
-                null,
-                false
-            );
-            
-            var node;
-            var nodesToReplace = [];
-            
-            while (node = walker.nextNode()) {
-                if (node.nodeValue && 
-                    (node.nodeValue.indexOf('Ship to') !== -1 || 
-                     node.nodeValue.indexOf('Ship To') !== -1 ||
-                     node.nodeValue.indexOf('SHIP TO') !== -1)) {
-                    nodesToReplace.push(node);
-                }
-            }
-            
-            nodesToReplace.forEach(function(node) {
-                node.nodeValue = node.nodeValue
-                    .replace(/Ship to/gi, 'Pickup at')
-                    .replace(/Ship To/g, 'Pickup At')
-                    .replace(/SHIP TO/g, 'PICKUP AT');
-            });
-            
-            console.log('Omni Filteration: Changed ' + nodesToReplace.length + ' "Ship to" labels to "Pickup at"');
-        }
-        
-        changeShipToLabel();
-        
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', changeShipToLabel);
-        }
-        
-        setTimeout(changeShipToLabel, 500);
-        setTimeout(changeShipToLabel, 1000);
-    })();
-    </script>
-    <?php
-}
-// ================================================================
-// ADD SCHOOL NAME & CLASS NAME BELOW COMPANY NAME IN BILL TO
+// ADD SCHOOL NAME & CLASS NAME BELOW PERSON NAME IN BILL TO
 // ================================================================
 
 hooks()->add_action('app_admin_head', 'omni_inject_school_class_info');
@@ -645,7 +574,7 @@ function omni_inject_school_class_info()
         return;
     }
     
-    $CI->db->select('school_name, class_name, delivery_method');
+    $CI->db->select('school_name, class_name');
     $CI->db->where('client_id', $invoice->clientid);
     $delivery_info = $CI->db->get(db_prefix() . 'omni_student_delivery')->row();
     
@@ -658,29 +587,21 @@ function omni_inject_school_class_info()
     
     ?>
     <style>
-        /* Uniform styling for school and class name */
         .omni-school-info {
             font-size: 14px !important;
-            color: #333 !important;
+            color: #555 !important;
             margin: 0 !important;
             padding: 0 !important;
-            line-height: 1.4 !important;
+            line-height: 1.5 !important;
             font-weight: normal !important;
         }
         
-        .omni-school-name {
-            color: #333 !important;
-            font-size: 14px !important;
-            font-weight: 500 !important;
-            display: inline !important;
-        }
-        
+        .omni-school-name,
         .omni-class-name {
-            color: #333 !important;
+            color: #555 !important;
             font-size: 14px !important;
-            font-weight: 500 !important;
+            font-weight: normal !important;
             display: inline !important;
-            margin-left: 5px !important;
         }
         
         .omni-separator {
@@ -690,9 +611,7 @@ function omni_inject_school_class_info()
         }
         
         @media print {
-            .omni-school-info {
-                font-size: 13px !important;
-            }
+            .omni-school-info,
             .omni-school-name,
             .omni-class-name {
                 font-size: 13px !important;
@@ -707,141 +626,229 @@ function omni_inject_school_class_info()
         var schoolName = <?php echo json_encode($school_name); ?>;
         var className = <?php echo json_encode($class_name); ?>;
         
-        console.log('=== OMNI SCHOOL INFO DEBUG ===');
-        console.log('School Name:', schoolName);
-        console.log('Class Name:', className);
+        console.log('🏫 Omni: Injecting school info');
+        
+        function waitForDOM(callback) {
+            if (document.body && document.readyState !== 'loading') {
+                callback();
+            } else {
+                setTimeout(function() { waitForDOM(callback); }, 100);
+            }
+        }
         
         function injectSchoolClassInfo() {
-            console.log('Attempting to inject school/class info...');
-            
-            // Check if already injected
-            if (document.querySelector('.omni-school-info')) {
-                console.log('Already injected - skipping');
-                return true;
-            }
-            
-            // Find all address elements
-            var addresses = document.querySelectorAll('address');
-            console.log('Found', addresses.length, 'address elements');
-            
-            if (addresses.length === 0) {
-                console.log('No address elements found');
+            if (!document.body) {
                 return false;
             }
             
-            // First address is usually "Bill To"
-            var billToAddress = addresses[0];
-            console.log('Using first address element for Bill To');
+            if (document.querySelector('.omni-school-info')) {
+                return true;
+            }
             
-            // Method 1: Insert after first <br> tag
+            var billToHeading = null;
+            var headings = document.querySelectorAll('h4, h3, strong, b');
+            
+            for (var i = 0; i < headings.length; i++) {
+                var text = headings[i].textContent.trim().toLowerCase();
+                if (text === 'bill to' || text === 'bill to:') {
+                    billToHeading = headings[i];
+                    break;
+                }
+            }
+            
+            var billToAddress = null;
+            
+            if (billToHeading) {
+                var currentElement = billToHeading;
+                while (currentElement && !billToAddress) {
+                    currentElement = currentElement.nextElementSibling;
+                    if (currentElement && currentElement.tagName === 'ADDRESS') {
+                        billToAddress = currentElement;
+                        break;
+                    }
+                }
+            }
+            
+            if (!billToAddress) {
+                var addresses = document.querySelectorAll('address');
+                
+                if (addresses.length >= 2) {
+                    billToAddress = addresses[1];
+                } else if (addresses.length === 1) {
+                    billToAddress = addresses[0];
+                } else {
+                    return false;
+                }
+            }
+            
             var firstBr = billToAddress.querySelector('br');
             
             if (firstBr) {
-                console.log('Found first <br> tag - inserting after it');
-                
-                // Create the school info HTML - all on ONE LINE
-                var schoolDiv = document.createElement('span');
-                schoolDiv.className = 'omni-school-info';
-                
                 var schoolSpan = document.createElement('span');
-                schoolSpan.className = 'omni-school-name';
-                schoolSpan.textContent = schoolName;
-                schoolDiv.appendChild(schoolSpan);
+                schoolSpan.className = 'omni-school-info';
+                schoolSpan.innerHTML = '<span class="omni-school-name">' + schoolName + '</span>' +
+                                      '<span class="omni-separator"> - </span>' +
+                                      '<span class="omni-class-name">' + className + '</span>';
                 
-                if (className && className !== '') {
-                    // Add separator
-                    var separator = document.createElement('span');
-                    separator.className = 'omni-separator';
-                    separator.textContent = '-';
-                    schoolDiv.appendChild(separator);
-                    
-                    // Add class name
-                    var classSpan = document.createElement('span');
-                    classSpan.className = 'omni-class-name';
-                    classSpan.textContent = className;
-                    schoolDiv.appendChild(classSpan);
-                }
+                var newBr = document.createElement('br');
                 
-                schoolDiv.appendChild(document.createElement('br'));
+                var nextNode = firstBr.nextSibling;
+                firstBr.parentNode.insertBefore(newBr, nextNode);
+                firstBr.parentNode.insertBefore(schoolSpan, newBr);
                 
-                // Insert after first BR
-                firstBr.parentNode.insertBefore(schoolDiv, firstBr.nextSibling);
-                
-                console.log('✅ School info injected successfully using BR method');
+                console.log('   ✅ School info injected');
                 return true;
             }
             
-            // Method 2: Parse innerHTML and inject
-            console.log('No <br> found, trying innerHTML method');
-            
-            var html = billToAddress.innerHTML;
-            var parts = html.split('<br>');
-            
-            if (parts.length < 2) {
-                parts = html.split('<br/>');
-            }
-            if (parts.length < 2) {
-                parts = html.split('<br />');
-            }
-            
-            console.log('Split into', parts.length, 'parts');
-            
-            if (parts.length >= 2) {
-                // Insert school info after first part (company name)
-                var schoolInfo = '<span class="omni-school-info">';
-                schoolInfo += '<span class="omni-school-name">' + schoolName + '</span>';
-                if (className && className !== '') {
-                    schoolInfo += '<span class="omni-separator"> - </span>';
-                    schoolInfo += '<span class="omni-class-name">' + className + '</span>';
-                }
-                schoolInfo += '</span>';
-                
-                parts.splice(1, 0, schoolInfo);
-                billToAddress.innerHTML = parts.join('<br>');
-                
-                console.log('✅ School info injected successfully using innerHTML method');
-                return true;
-            }
-            
-            console.log('❌ Could not inject - no suitable insertion point found');
             return false;
         }
         
-        // Run immediately
-        injectSchoolClassInfo();
-        
-        // Run after page load
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() {
-                console.log('Running on DOMContentLoaded');
-                injectSchoolClassInfo();
-            });
-        }
-        
-        // Run with delays
-        setTimeout(function() {
-            console.log('Running after 500ms');
+        waitForDOM(function() {
             injectSchoolClassInfo();
-        }, 500);
-        
-        setTimeout(function() {
-            console.log('Running after 1000ms');
-            injectSchoolClassInfo();
-        }, 1000);
-        
-        setTimeout(function() {
-            console.log('Running after 2000ms');
-            injectSchoolClassInfo();
-        }, 2000);
-        
-        console.log('=== END OMNI SCHOOL INFO DEBUG ===');
+            setTimeout(injectSchoolClassInfo, 500);
+            setTimeout(injectSchoolClassInfo, 1000);
+            setTimeout(injectSchoolClassInfo, 2000);
+        });
     })();
     </script>
     <?php
 }
 
 // ================================================================
-// HOOK INTO OMNI SALES INVOICE CREATION
+// REMOVE "SHIP TO" SECTION & ADD "PICKUP AT" LABEL
+// ================================================================
+
+hooks()->add_action('app_admin_head', 'omni_remove_ship_to_add_pickup_at');
+hooks()->add_action('app_customers_head', 'omni_remove_ship_to_add_pickup_at');
+
+function omni_remove_ship_to_add_pickup_at()
+{
+    $current_url = $_SERVER['REQUEST_URI'];
+    if (strpos($current_url, 'invoice') === false && strpos($current_url, 'invoicehtml') === false) {
+        return;
+    }
+    
+    $CI = &get_instance();
+    
+    $invoice_id = null;
+    if (preg_match('/invoice\/(\d+)/', $current_url, $matches)) {
+        $invoice_id = $matches[1];
+    } elseif (preg_match('/invoicehtml\/(\d+)/', $current_url, $matches)) {
+        $invoice_id = $matches[1];
+    } elseif ($CI->input->get('id')) {
+        $invoice_id = $CI->input->get('id');
+    }
+    
+    if (!$invoice_id) {
+        return;
+    }
+    
+    $CI->db->select('clientid');
+    $CI->db->where('id', $invoice_id);
+    $invoice = $CI->db->get(db_prefix() . 'invoices')->row();
+    
+    if (!$invoice) {
+        return;
+    }
+    
+    // Check if this is a store pickup order
+    $CI->db->where('client_id', $invoice->clientid);
+    $CI->db->where('delivery_method', 'store_pickup');
+    $delivery = $CI->db->get(db_prefix() . 'omni_student_delivery')->row();
+    
+    if (!$delivery) {
+        return; // Not store pickup
+    }
+    
+    ?>
+    <style>
+        .omni-hide-ship-section {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            overflow: hidden !important;
+        }
+        
+        .omni-pickup-label {
+            font-size: 15px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+            display: block;
+        }
+    </style>
+    
+    <script>
+    (function() {
+        'use strict';
+        
+        console.log('🚚 OMNI: Store Pickup - Removing "Ship to" & Adding "Pickup at"');
+        
+        function waitForDOM(callback) {
+            if (document.body && document.readyState !== 'loading') {
+                callback();
+            } else {
+                setTimeout(function() { waitForDOM(callback); }, 100);
+            }
+        }
+        
+        function removeShipToAddPickupAt() {
+            if (!document.body) {
+                return false;
+            }
+            
+            if (document.querySelector('.omni-pickup-label')) {
+                return true;
+            }
+            
+            var headings = document.querySelectorAll('h4, h3, h5, strong, b');
+            var shipToHeading = null;
+            
+            for (var i = 0; i < headings.length; i++) {
+                var heading = headings[i];
+                var text = heading.textContent.trim().toLowerCase();
+                
+                if (/^ship\s*to$/i.test(text) && !/bill/i.test(text)) {
+                    shipToHeading = heading;
+                    console.log('   ✓ Found "Ship to" heading');
+                    break;
+                }
+            }
+            
+            if (shipToHeading) {
+                var pickupLabel = document.createElement('h4');
+                pickupLabel.className = 'omni-pickup-label';
+                pickupLabel.textContent = 'Pickup at';
+                
+                shipToHeading.parentNode.insertBefore(pickupLabel, shipToHeading);
+                console.log('   ✓ Added "Pickup at" label');
+                
+                shipToHeading.classList.add('omni-hide-ship-section');
+                console.log('   ✓ Hidden "Ship to" heading');
+                
+                console.log('   ✅ SUCCESS');
+                return true;
+            }
+            
+            return false;
+        }
+        
+        waitForDOM(function() {
+            removeShipToAddPickupAt();
+            
+            setTimeout(removeShipToAddPickupAt, 300);
+            setTimeout(removeShipToAddPickupAt, 600);
+            setTimeout(removeShipToAddPickupAt, 1000);
+            setTimeout(removeShipToAddPickupAt, 1500);
+            setTimeout(removeShipToAddPickupAt, 2000);
+        });
+    })();
+    </script>
+    <?php
+}
+
+// ================================================================
+// INVOICE HOOKS
 // ================================================================
 
 hooks()->add_action('omni_sales_after_invoice_added', 'omni_update_shipping_after_order_invoice', 10, 1);
@@ -889,7 +896,6 @@ function omni_update_shipping_after_order_invoice($order_id)
     $invoice = $CI->db->get(db_prefix() . 'invoices')->row();
     
     if (!$invoice) {
-        log_activity('Omni Filteration: Could not find invoice for Order #' . $order_id);
         return;
     }
     
@@ -905,13 +911,9 @@ function omni_update_shipping_after_order_invoice($order_id)
     $CI->db->update(db_prefix() . 'invoices', $update_data);
     
     if ($CI->db->affected_rows() > 0) {
-        log_activity('Omni Filteration: Updated shipping address for Invoice #' . $invoice->id . ' (Order #' . $order_id . ') - Store Pickup');
+        log_activity('Omni Filteration: Updated shipping for Invoice #' . $invoice->id);
     }
 }
-
-// ================================================================
-// INVOICE SHIPPING ADDRESS REPLACEMENT FOR VIEWING
-// ================================================================
 
 hooks()->add_filter('invoice_html_pdf_data', 'omni_replace_invoice_shipping_data', 10, 1);
 
@@ -974,10 +976,6 @@ function omni_replace_invoice_shipping_data($invoice_data)
     return $invoice;
 }
 
-// ================================================================
-// SECONDARY HOOKS
-// ================================================================
-
 hooks()->add_action('after_invoice_added', 'omni_update_shipping_in_database', 10, 1);
 hooks()->add_action('after_invoice_updated', 'omni_update_shipping_in_database', 10, 1);
 
@@ -1022,10 +1020,6 @@ function omni_update_shipping_in_database($invoice_id)
             
             $CI->db->where('id', $invoice_id);
             $CI->db->update(db_prefix() . 'invoices', $update_data);
-            
-            if ($CI->db->affected_rows() > 0) {
-                log_activity('Omni Filteration: Updated shipping address for Invoice #' . $invoice_id . ' (Standard)');
-            }
         }
     }
 }
@@ -1158,7 +1152,7 @@ function omni_sync_all_invoices()
         }
     }
     
-    log_activity('Omni Filteration: Bulk sync completed - Updated: ' . $updated_count . ', Skipped: ' . $skipped_count);
+    log_activity('Omni Filteration: Bulk sync - Updated: ' . $updated_count . ', Skipped: ' . $skipped_count);
     
     return [
         'success' => true,
@@ -1169,7 +1163,7 @@ function omni_sync_all_invoices()
 }
 
 // ================================================================
-// MODULE INITIALIZATION COMPLETE
+// MODULE INITIALIZATION
 // ================================================================
 
-log_activity('Omni Filteration Module: Loaded successfully (v2.3)');
+log_activity('Omni Filteration Module: Loaded successfully (v3.2)');
