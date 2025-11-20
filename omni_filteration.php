@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Omni Filteration
 Description: Store pickup and delivery management with invoice integration
-Version: 3.3
+Version: 3.4
 Author: EchoPx
 */
 
@@ -39,14 +39,103 @@ function omni_filteration_init_menu()
 {
     $CI = &get_instance();
     
-    if (is_admin()) {
-        $CI->app_menu->add_setup_menu_item('omni-store-address', [
-            'name'     => 'Store Address',
-            'href'     => admin_url('omni_filteration/manage_address'),
-            'position' => 35,
-            'icon'     => 'fa fa-map-marker'
-        ]);
+    // if (is_admin()) {
+    //     // Add menu under Setup
+    //     $CI->app_menu->add_setup_menu_item('omni-store-address', [
+    //         'name'     => 'Store Address',
+    //         'href'     => admin_url('omni_filteration_admin/manage_address'), // Updated URL
+    //         'position' => 35,
+    //         'icon'     => 'fa fa-map-marker'
+    //     ]);
+        
+    //     // Add menu under Utilities (optional)
+    //     $CI->app_menu->add_setup_menu_item('omni-deliveries', [
+    //         'name'     => 'Student Deliveries',
+    //         'href'     => admin_url('omni_filteration_admin/view_deliveries'), // Updated URL
+    //         'position' => 36,
+    //         'icon'     => 'fa fa-truck'
+    //     ]);
+    // }
+}
+
+// ================================================================
+// OVERRIDE SHIPPING LABEL AND ADDRESS FOR STORE PICKUP
+// ================================================================
+
+hooks()->add_action('before_render_invoice_template', 'omni_modify_invoice_shipping_label', 10, 1);
+
+function omni_modify_invoice_shipping_label($invoice_id)
+{
+    $CI = &get_instance();
+    
+    if (empty($invoice_id)) {
+        return;
     }
+    
+    if (!$CI->load->is_loaded('invoices_model')) {
+        $CI->load->model('invoices_model');
+    }
+    
+    $invoice = $CI->invoices_model->get($invoice_id);
+    
+    if (!$invoice || empty($invoice->clientid)) {
+        return;
+    }
+    
+    if (!$CI->load->is_loaded('omni_filteration_model')) {
+        $CI->load->model('omni_filteration/omni_filteration_model');
+    }
+    
+    $delivery = $CI->omni_filteration_model->get_student_delivery_by_client($invoice->clientid);
+    
+    if ($delivery && $delivery->delivery_method === 'store_pickup') {
+        // Store this in a global variable for use in templates
+        $GLOBALS['omni_is_store_pickup'] = true;
+    }
+}
+
+// ================================================================
+// MODIFY LANGUAGE STRING FOR SHIPPING ADDRESS
+// ================================================================
+
+hooks()->add_filter('before_return_language_line', 'omni_change_shipping_to_pickup_label', 10, 2);
+
+function omni_change_shipping_to_pickup_label($label, $key)
+{
+    // Check if this is a store pickup order
+    if (isset($GLOBALS['omni_is_store_pickup']) && $GLOBALS['omni_is_store_pickup'] === true) {
+        
+        // Change shipping-related labels to pickup
+        if ($key === 'shipping_address' || $key === 'ship_to') {
+            return 'Pickup at';
+        }
+        
+        if ($key === 'shipping_street') {
+            return 'Store Address';
+        }
+        
+        if ($key === 'shipping_city') {
+            return 'City';
+        }
+        
+        if ($key === 'shipping_state') {
+            return 'State';
+        }
+        
+        if ($key === 'shipping_zip') {
+            return 'Pincode';
+        }
+        
+        if ($key === 'shipping_country') {
+            return 'Country';
+        }
+        
+        if ($key === 'show_shipping_on_invoice') {
+            return 'Show pickup location on invoice';
+        }
+    }
+    
+    return $label;
 }
 
 // ================================================================
@@ -706,13 +795,13 @@ function omni_inject_school_class_info()
 }
 
 // ================================================================
-// REPLACE ENTIRE "SHIP TO" SECTION WITH "PICKUP AT" + STORE ADDRESS
+// CHANGE "SHIP TO" TO "PICKUP AT" IN CLIENT-SIDE INVOICE VIEW
 // ================================================================
 
-hooks()->add_action('app_admin_head', 'omni_replace_ship_to_with_pickup_at');
-hooks()->add_action('app_customers_head', 'omni_replace_ship_to_with_pickup_at');
+hooks()->add_action('app_admin_head', 'omni_change_ship_to_pickup_at_label');
+hooks()->add_action('app_customers_head', 'omni_change_ship_to_pickup_at_label');
 
-function omni_replace_ship_to_with_pickup_at()
+function omni_change_ship_to_pickup_at_label()
 {
     $current_url = $_SERVER['REQUEST_URI'];
     if (strpos($current_url, 'invoice') === false && strpos($current_url, 'invoicehtml') === false) {
@@ -751,49 +840,12 @@ function omni_replace_ship_to_with_pickup_at()
         return; // Not store pickup
     }
     
-    // Get store address
-    if (!$CI->load->is_loaded('omni_filteration_model')) {
-        $CI->load->model('omni_filteration/omni_filteration_model');
-    }
-    
-    $store_address = $CI->omni_filteration_model->get_address();
-    
-    if (!$store_address) {
-        return;
-    }
-    
-    $store_name = htmlspecialchars($store_address->store_name);
-    $store_phone = htmlspecialchars($store_address->phone);
-    $store_addr = htmlspecialchars($store_address->address);
-    $store_city = htmlspecialchars($store_address->city);
-    $store_state = htmlspecialchars($store_address->state);
-    $store_pincode = htmlspecialchars($store_address->pincode);
-    
     ?>
-    <style>
-        /* Hide original Ship to section completely */
-        .omni-hide-ship-section {
-            display: none !important;
-            visibility: hidden !important;
-            height: 0 !important;
-            overflow: hidden !important;
-        }
-    </style>
-    
     <script>
     (function() {
         'use strict';
         
-        console.log('🚚 OMNI: Store Pickup - Replacing "Ship to" section with "Pickup at"');
-        
-        var STORE_DATA = {
-            name: <?php echo json_encode($store_name); ?>,
-            phone: <?php echo json_encode($store_phone); ?>,
-            address: <?php echo json_encode($store_addr); ?>,
-            city: <?php echo json_encode($store_city); ?>,
-            state: <?php echo json_encode($store_state); ?>,
-            pincode: <?php echo json_encode($store_pincode); ?>
-        };
+        console.log('🚚 OMNI: Store Pickup - Changing "Ship to" to "Pickup at"');
         
         function waitForDOM(callback) {
             if (document.body && document.readyState !== 'loading') {
@@ -803,80 +855,52 @@ function omni_replace_ship_to_with_pickup_at()
             }
         }
         
-        function replaceShipToSection() {
+        function changeLabels() {
             if (!document.body) {
                 return false;
             }
             
-            if (document.querySelector('.omni-pickup-section')) {
-                console.log('   Already replaced');
-                return true;
-            }
+            var changed = false;
             
-            // Find "Ship to" heading
-            var headings = document.querySelectorAll('h4, h3, h5, strong, b');
-            var shipToHeading = null;
-            var shipToSection = null;
+            // Find all headings
+            var headings = document.querySelectorAll('h4, h3, h5, strong, b, label');
             
             for (var i = 0; i < headings.length; i++) {
                 var heading = headings[i];
-                var text = heading.textContent.trim().toLowerCase();
+                var text = heading.textContent.trim();
                 
-                // Find "Ship to" but NOT "Bill to"
-                if (/^ship\s*to$/i.test(text) && !/bill/i.test(text)) {
-                    shipToHeading = heading;
-                    
-                    // Find the parent section (col-md-4, col-md-6, etc)
-                    shipToSection = heading.closest('.col-md-4, .col-md-6, .col-sm-6, div[class*="col-"]');
-                    
-                    if (!shipToSection) {
-                        shipToSection = heading.parentElement;
-                    }
-                    
-                    console.log('   ✓ Found "Ship to" section');
-                    break;
+                // Match "Ship to" or "Ship To" (case insensitive) but NOT "Bill to"
+                if (/^ship\s+to$/i.test(text) && !/bill/i.test(text)) {
+                    console.log('   ✓ Found "Ship to" heading');
+                    heading.textContent = 'Pickup at';
+                    changed = true;
+                }
+                
+                // Also check for "Shipping Address"
+                if (/shipping\s+address/i.test(text)) {
+                    console.log('   ✓ Found "Shipping Address"');
+                    heading.textContent = heading.textContent.replace(/shipping\s+address/gi, 'Pickup at');
+                    changed = true;
                 }
             }
             
-            if (shipToSection) {
-                // Get the classes from original section
-                var originalClasses = shipToSection.className || 'col-md-4';
-                
-                // Create new "Pickup at" section with store address
-                var pickupSectionHTML = `
-                    <div class="${originalClasses} omni-pickup-section">
-                        <h4>Pickup at</h4>
-                        <address>
-                            ${STORE_DATA.name}<br>
-                            ${STORE_DATA.phone ? STORE_DATA.phone + '<br>' : ''}
-                            ${STORE_DATA.address}<br>
-                            ${STORE_DATA.city}, ${STORE_DATA.state},<br>
-                            ${STORE_DATA.pincode ? STORE_DATA.pincode + '.<br>' : ''}
-                            ${STORE_DATA.city} ${STORE_DATA.state}<br>
-                            IN ${STORE_DATA.pincode}
-                        </address>
-                    </div>
-                `;
-                
-                // Replace the entire section
-                shipToSection.outerHTML = pickupSectionHTML;
-                
-                console.log('   ✅ SUCCESS: Replaced "Ship to" with "Pickup at" + Store Address');
-                return true;
+            if (changed) {
+                console.log('   ✅ SUCCESS: Labels changed');
             } else {
-                console.log('   ⚠ "Ship to" section not found');
-                return false;
+                console.log('   ⚠ "Ship to" heading not found');
             }
+            
+            return changed;
         }
         
         waitForDOM(function() {
-            replaceShipToSection();
+            changeLabels();
             
-            setTimeout(replaceShipToSection, 300);
-            setTimeout(replaceShipToSection, 600);
-            setTimeout(replaceShipToSection, 1000);
-            setTimeout(replaceShipToSection, 1500);
-            setTimeout(replaceShipToSection, 2000);
+            setTimeout(changeLabels, 300);
+            setTimeout(changeLabels, 600);
+            setTimeout(changeLabels, 1000);
+            setTimeout(changeLabels, 1500);
+            setTimeout(changeLabels, 2000);
         });
     })();
     </script>
@@ -1202,4 +1226,4 @@ function omni_sync_all_invoices()
 // MODULE INITIALIZATION
 // ================================================================
 
-log_activity('Omni Filteration Module: Loaded successfully (v3.3)');
+log_activity('Omni Filteration Module: Loaded successfully (v3.4)');
