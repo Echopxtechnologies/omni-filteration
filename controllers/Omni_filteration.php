@@ -2,63 +2,12 @@
 
 defined('BASEPATH') or exit('No direct script access allowed');
 
-class Omni_filteration extends App_Controller
+class Omni_filteration extends ClientsController
 {
     public function __construct()
     {
         parent::__construct();
         $this->load->model('omni_filteration_model');
-        
-        // Register hook to replace ONLY shipping address in invoices (NOT billing)
-        hooks()->add_filter('invoice_html_pdf_data', [$this, 'replace_shipping_address_only']);
-    }
-
-    /**
-     * HOOK: Replace ONLY shipping address with store address (NEVER touch billing)
-     * This modifies invoice shipping address before PDF generation
-     */
-    public function replace_shipping_address_only($invoice_data)
-    {
-        // Check if invoice exists
-        if (!isset($invoice_data['invoice']) || empty($invoice_data['invoice'])) {
-            return $invoice_data;
-        }
-        
-        $invoice = $invoice_data['invoice'];
-        $client_id = $invoice->clientid;
-        
-        // Get client's delivery preference
-        $delivery = $this->omni_filteration_model->get_student_delivery_by_client($client_id);
-        
-        // ONLY if store pickup is selected, replace SHIPPING address (NOT billing)
-        if ($delivery && $delivery->delivery_method === 'store_pickup') {
-            
-            // Get store address
-            $store_address = $this->omni_filteration_model->get_address();
-            
-            if ($store_address) {
-                // ✅ REPLACE ONLY SHIPPING ADDRESS FIELDS (billing untouched)
-                $invoice->shipping_street = $store_address->address;
-                $invoice->shipping_city = $store_address->city;
-                $invoice->shipping_state = $store_address->state;
-                $invoice->shipping_zip = $store_address->pincode;
-                $invoice->shipping_country = 102; // India
-                
-                // ❌ DO NOT TOUCH BILLING ADDRESS
-                // $invoice->billing_street = unchanged
-                // $invoice->billing_city = unchanged
-                // $invoice->billing_state = unchanged
-                // $invoice->billing_zip = unchanged
-                // $invoice->billing_country = unchanged
-                
-                // Update the invoice data
-                $invoice_data['invoice'] = $invoice;
-                
-                log_activity('Omni: Replaced ONLY shipping address with store address for invoice #' . $invoice->id);
-            }
-        }
-        
-        return $invoice_data;
     }
 
     /**
@@ -88,7 +37,7 @@ class Omni_filteration extends App_Controller
         header('Content-Type: application/json');
         
         if (!is_client_logged_in()) {
-            echo json_encode(['success' => false, 'message' => 'Client not logged in']);
+            echo json_encode(['success' => false, 'message' => 'Not logged in']);
             return;
         }
         
@@ -112,20 +61,49 @@ class Omni_filteration extends App_Controller
     }
 
     /**
-     * CLIENT AJAX: Save delivery method (AUTO-SAVE)
+     * CLIENT AJAX: Save delivery method (CRITICAL FUNCTION)
+     * This is called by JavaScript when dropdown selection changes
      */
     public function save_delivery_method()
     {
+        // Allow AJAX calls
         header('Content-Type: application/json');
         
-        if (!is_client_logged_in()) {
-            echo json_encode(['success' => false, 'message' => 'Client not logged in']);
+        // Get delivery method from POST
+        $delivery_method = $this->input->post('delivery_method');
+        
+        // IMPORTANT: Get client ID from session
+        // If client is logged in via omni_sales, use session
+        $client_id = null;
+        
+        // Try method 1: Standard client login
+        if (is_client_logged_in()) {
+            $client_id = get_client_user_id();
+        }
+        // Try method 2: Omni sales session
+        elseif ($this->session->userdata('client_user_id')) {
+            $client_id = $this->session->userdata('client_user_id');
+        }
+        // Try method 3: Posted client_id
+        elseif ($this->input->post('client_id')) {
+            $client_id = $this->input->post('client_id');
+        }
+        
+        // Validate client ID
+        if (empty($client_id)) {
+            echo json_encode([
+                'success' => false, 
+                'message' => 'Client not logged in',
+                'debug' => [
+                    'is_client_logged_in' => is_client_logged_in(),
+                    'session_client_id' => $this->session->userdata('client_user_id'),
+                    'post_data' => $_POST
+                ]
+            ]);
             return;
         }
         
-        $delivery_method = $this->input->post('delivery_method');
-        $client_id = get_client_user_id();
-        
+        // Validate delivery method
         if (empty($delivery_method)) {
             echo json_encode(['success' => false, 'message' => 'Please select a delivery method']);
             return;
@@ -137,16 +115,22 @@ class Omni_filteration extends App_Controller
             return;
         }
         
-        // Delete old entry (REPLACE functionality)
+        // Delete old entry for this client
         $this->db->where('client_id', $client_id);
         $this->db->delete(db_prefix() . 'omni_student_delivery');
         
         // Save new entry
-        $data = ['client_id' => $client_id, 'delivery_method' => $delivery_method];
+        $data = [
+            'client_id' => $client_id,
+            'delivery_method' => $delivery_method
+        ];
+        
         $insert_id = $this->omni_filteration_model->save_student_delivery($data);
         
         if ($insert_id) {
             $saved_data = $this->omni_filteration_model->get_client_delivery_info($client_id);
+            
+            log_activity('Omni Filteration: Saved delivery method for Client #' . $client_id . ' - ' . $delivery_method);
             
             echo json_encode([
                 'success' => true,
@@ -160,7 +144,14 @@ class Omni_filteration extends App_Controller
                 ]
             ]);
         } else {
-            echo json_encode(['success' => false, 'message' => 'Failed to save delivery method']);
+            echo json_encode([
+                'success' => false, 
+                'message' => 'Failed to save delivery method',
+                'debug' => [
+                    'client_id' => $client_id,
+                    'delivery_method' => $delivery_method
+                ]
+            ]);
         }
     }
 
