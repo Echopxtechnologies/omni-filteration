@@ -5,7 +5,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: Omni Filteration
 Description: Store pickup and delivery management with invoice integration
-Version: 3.2
+Version: 3.3
 Author: EchoPx
 */
 
@@ -236,7 +236,6 @@ function omni_filteration_inject_dropdown()
                     return true;
                 }
                 
-                // Find the Store Address or Shipping Address section
                 var storeAddressSection = null;
                 var headings = document.querySelectorAll('h4, h3, h5, strong');
                 
@@ -251,7 +250,6 @@ function omni_filteration_inject_dropdown()
                 }
                 
                 if (!storeAddressSection) {
-                    // Fallback: look for Customer details
                     for (var j = 0; j < headings.length; j++) {
                         var text2 = headings[j].textContent.trim().toLowerCase();
                         
@@ -268,11 +266,9 @@ function omni_filteration_inject_dropdown()
                     return false;
                 }
                 
-                // Get the column class
                 var colClass = storeAddressSection.className.match(/col-md-\d+|col-sm-\d+/);
                 var columnClass = colClass ? colClass[0] : 'col-md-6';
                 
-                // Create delivery method box
                 var deliveryMethodHTML = `
                     <div class="${columnClass} omni-delivery-column">
                         <div class="omni-delivery-method-box">
@@ -295,7 +291,6 @@ function omni_filteration_inject_dropdown()
                     </div>
                 `;
                 
-                // Insert AFTER the address section
                 storeAddressSection.insertAdjacentHTML('afterend', deliveryMethodHTML);
                 console.log('   ✅ Delivery method box inserted');
                 
@@ -320,7 +315,6 @@ function omni_filteration_inject_dropdown()
                         localStorage.setItem('omni_delivery_method', selectedMethod);
                     }
                     
-                    // HANDLE ADDRESS REPLACEMENT
                     handleAddressDisplay(selectedMethod);
                     
                     if (selectedMethod === 'store_pickup' || selectedMethod === 'home_delivery') {
@@ -354,7 +348,6 @@ function omni_filteration_inject_dropdown()
                     }, 1000);
                 });
                 
-                // Restore saved delivery method
                 if (typeof Storage !== 'undefined') {
                     var savedMethod = localStorage.getItem('omni_delivery_method');
                     if (savedMethod) {
@@ -401,7 +394,6 @@ function omni_filteration_inject_dropdown()
                     }
                 }
                 
-                // Also try icons
                 var icons = document.querySelectorAll('.fa-truck, .fa-shipping-fast');
                 for (var j = 0; j < icons.length; j++) {
                     var icon = icons[j];
@@ -421,7 +413,6 @@ function omni_filteration_inject_dropdown()
                     return;
                 }
                 
-                // Save original HTML if not already saved
                 if (!window.omniOriginalShippingHTML) {
                     window.omniOriginalShippingHTML = shippingSection.outerHTML;
                     window.omniOriginalShippingParent = shippingSection.parentNode;
@@ -715,13 +706,13 @@ function omni_inject_school_class_info()
 }
 
 // ================================================================
-// REMOVE "SHIP TO" SECTION & ADD "PICKUP AT" LABEL
+// REPLACE ENTIRE "SHIP TO" SECTION WITH "PICKUP AT" + STORE ADDRESS
 // ================================================================
 
-hooks()->add_action('app_admin_head', 'omni_remove_ship_to_add_pickup_at');
-hooks()->add_action('app_customers_head', 'omni_remove_ship_to_add_pickup_at');
+hooks()->add_action('app_admin_head', 'omni_replace_ship_to_with_pickup_at');
+hooks()->add_action('app_customers_head', 'omni_replace_ship_to_with_pickup_at');
 
-function omni_remove_ship_to_add_pickup_at()
+function omni_replace_ship_to_with_pickup_at()
 {
     $current_url = $_SERVER['REQUEST_URI'];
     if (strpos($current_url, 'invoice') === false && strpos($current_url, 'invoicehtml') === false) {
@@ -760,21 +751,32 @@ function omni_remove_ship_to_add_pickup_at()
         return; // Not store pickup
     }
     
+    // Get store address
+    if (!$CI->load->is_loaded('omni_filteration_model')) {
+        $CI->load->model('omni_filteration/omni_filteration_model');
+    }
+    
+    $store_address = $CI->omni_filteration_model->get_address();
+    
+    if (!$store_address) {
+        return;
+    }
+    
+    $store_name = htmlspecialchars($store_address->store_name);
+    $store_phone = htmlspecialchars($store_address->phone);
+    $store_addr = htmlspecialchars($store_address->address);
+    $store_city = htmlspecialchars($store_address->city);
+    $store_state = htmlspecialchars($store_address->state);
+    $store_pincode = htmlspecialchars($store_address->pincode);
+    
     ?>
     <style>
+        /* Hide original Ship to section completely */
         .omni-hide-ship-section {
             display: none !important;
             visibility: hidden !important;
             height: 0 !important;
             overflow: hidden !important;
-        }
-        
-        .omni-pickup-label {
-            font-size: 15px;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 10px;
-            display: block;
         }
     </style>
     
@@ -782,7 +784,16 @@ function omni_remove_ship_to_add_pickup_at()
     (function() {
         'use strict';
         
-        console.log('🚚 OMNI: Store Pickup - Removing "Ship to" & Adding "Pickup at"');
+        console.log('🚚 OMNI: Store Pickup - Replacing "Ship to" section with "Pickup at"');
+        
+        var STORE_DATA = {
+            name: <?php echo json_encode($store_name); ?>,
+            phone: <?php echo json_encode($store_phone); ?>,
+            address: <?php echo json_encode($store_addr); ?>,
+            city: <?php echo json_encode($store_city); ?>,
+            state: <?php echo json_encode($store_state); ?>,
+            pincode: <?php echo json_encode($store_pincode); ?>
+        };
         
         function waitForDOM(callback) {
             if (document.body && document.readyState !== 'loading') {
@@ -792,55 +803,80 @@ function omni_remove_ship_to_add_pickup_at()
             }
         }
         
-        function removeShipToAddPickupAt() {
+        function replaceShipToSection() {
             if (!document.body) {
                 return false;
             }
             
-            if (document.querySelector('.omni-pickup-label')) {
+            if (document.querySelector('.omni-pickup-section')) {
+                console.log('   Already replaced');
                 return true;
             }
             
+            // Find "Ship to" heading
             var headings = document.querySelectorAll('h4, h3, h5, strong, b');
             var shipToHeading = null;
+            var shipToSection = null;
             
             for (var i = 0; i < headings.length; i++) {
                 var heading = headings[i];
                 var text = heading.textContent.trim().toLowerCase();
                 
+                // Find "Ship to" but NOT "Bill to"
                 if (/^ship\s*to$/i.test(text) && !/bill/i.test(text)) {
                     shipToHeading = heading;
-                    console.log('   ✓ Found "Ship to" heading');
+                    
+                    // Find the parent section (col-md-4, col-md-6, etc)
+                    shipToSection = heading.closest('.col-md-4, .col-md-6, .col-sm-6, div[class*="col-"]');
+                    
+                    if (!shipToSection) {
+                        shipToSection = heading.parentElement;
+                    }
+                    
+                    console.log('   ✓ Found "Ship to" section');
                     break;
                 }
             }
             
-            if (shipToHeading) {
-                var pickupLabel = document.createElement('h4');
-                pickupLabel.className = 'omni-pickup-label';
-                pickupLabel.textContent = 'Pickup at';
+            if (shipToSection) {
+                // Get the classes from original section
+                var originalClasses = shipToSection.className || 'col-md-4';
                 
-                shipToHeading.parentNode.insertBefore(pickupLabel, shipToHeading);
-                console.log('   ✓ Added "Pickup at" label');
+                // Create new "Pickup at" section with store address
+                var pickupSectionHTML = `
+                    <div class="${originalClasses} omni-pickup-section">
+                        <h4>Pickup at</h4>
+                        <address>
+                            ${STORE_DATA.name}<br>
+                            ${STORE_DATA.phone ? STORE_DATA.phone + '<br>' : ''}
+                            ${STORE_DATA.address}<br>
+                            ${STORE_DATA.city}, ${STORE_DATA.state},<br>
+                            ${STORE_DATA.pincode ? STORE_DATA.pincode + '.<br>' : ''}
+                            ${STORE_DATA.city} ${STORE_DATA.state}<br>
+                            IN ${STORE_DATA.pincode}
+                        </address>
+                    </div>
+                `;
                 
-                shipToHeading.classList.add('omni-hide-ship-section');
-                console.log('   ✓ Hidden "Ship to" heading');
+                // Replace the entire section
+                shipToSection.outerHTML = pickupSectionHTML;
                 
-                console.log('   ✅ SUCCESS');
+                console.log('   ✅ SUCCESS: Replaced "Ship to" with "Pickup at" + Store Address');
                 return true;
+            } else {
+                console.log('   ⚠ "Ship to" section not found');
+                return false;
             }
-            
-            return false;
         }
         
         waitForDOM(function() {
-            removeShipToAddPickupAt();
+            replaceShipToSection();
             
-            setTimeout(removeShipToAddPickupAt, 300);
-            setTimeout(removeShipToAddPickupAt, 600);
-            setTimeout(removeShipToAddPickupAt, 1000);
-            setTimeout(removeShipToAddPickupAt, 1500);
-            setTimeout(removeShipToAddPickupAt, 2000);
+            setTimeout(replaceShipToSection, 300);
+            setTimeout(replaceShipToSection, 600);
+            setTimeout(replaceShipToSection, 1000);
+            setTimeout(replaceShipToSection, 1500);
+            setTimeout(replaceShipToSection, 2000);
         });
     })();
     </script>
@@ -1166,4 +1202,4 @@ function omni_sync_all_invoices()
 // MODULE INITIALIZATION
 // ================================================================
 
-log_activity('Omni Filteration Module: Loaded successfully (v3.2)');
+log_activity('Omni Filteration Module: Loaded successfully (v3.3)');
