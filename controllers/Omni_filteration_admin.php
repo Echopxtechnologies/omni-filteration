@@ -99,4 +99,5 @@ class Omni_filteration_admin extends AdminController
 
         redirect(admin_url('omni_filteration_admin/view_deliveries'));
     }
+    
 }

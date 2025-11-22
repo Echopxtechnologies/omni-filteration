@@ -405,7 +405,7 @@ function omni_filteration_inject_dropdown()
                     }
                     
                     handleAddressDisplay(selectedMethod);
-                    
+                    updateShippingFee(selectedMethod);
                     if (selectedMethod === 'store_pickup' || selectedMethod === 'home_delivery') {
                         saveDeliveryMethodToDatabase(selectedMethod);
                     }
@@ -462,8 +462,10 @@ function omni_filteration_inject_dropdown()
                 
                 if (method === 'store_pickup') {
                     replaceShippingWithStore(shippingSection);
+                    updateShippingFee('store_pickup');
                 } else if (method === 'home_delivery') {
                     restoreOriginalShipping();
+                    updateShippingFee('home_delivery');
                 }
             }
             
@@ -597,7 +599,276 @@ function omni_filteration_inject_dropdown()
                     setTimeout(function() { waitForDOM(callback); }, 100);
                 }
             }
+ /**
+ * Update shipping fee AND total for store pickup
+ */
+/**
+ * Update shipping fee AND recalculate total based on subtotal
+ * Formula: Total = Subtotal + Shipping Fee
+ */
+function updateShippingFee(method) {
+    console.log('   💰 Updating shipping and total for method:', method);
+    
+    var isStorePickup = (method === 'store_pickup');
+    var shippingFee = isStorePickup ? 0 : null;
+    
+    // ============================================================
+    // STEP 1: GET SUBTOTAL (never changes)
+    // ============================================================
+    
+    var subtotal = 0;
+    
+    // Method 1: Find subtotal from <td class="subtotal">
+    var subtotalCell = document.querySelector('td.subtotal, .subtotal');
+    
+    if (subtotalCell) {
+        var subtotalText = subtotalCell.textContent.trim().replace(/[^\d.]/g, '');
+        subtotal = parseFloat(subtotalText) || 0;
+        console.log('   📊 Subtotal from cell:', subtotal);
+    }
+    
+    // Method 2: Find from hidden input
+    if (subtotal === 0) {
+        var subtotalInput = document.querySelector('input[name="sub_total"], input[name="subtotal"]');
+        if (subtotalInput) {
+            subtotal = parseFloat(subtotalInput.value.replace(/[^\d.]/g, '')) || 0;
+            console.log('   📊 Subtotal from input:', subtotal);
+        }
+    }
+    
+    // Method 3: Find from data attribute
+    if (subtotal === 0) {
+        var totalInputs = document.querySelectorAll('input[data-original-total]');
+        totalInputs.forEach(function(input) {
+            if (input.name.toLowerCase().indexOf('sub') !== -1) {
+                subtotal = parseFloat(input.getAttribute('data-original-total')) || 0;
+                console.log('   📊 Subtotal from data-attr:', subtotal);
+            }
+        });
+    }
+    
+    if (subtotal === 0) {
+        console.log('   ⚠ Could not find subtotal, aborting');
+        return;
+    }
+    
+    // ============================================================
+    // STEP 2: UPDATE SHIPPING FEE
+    // ============================================================
+    
+    var originalShippingFee = 0;
+    var shippingUpdated = false;
+    
+    // Find shipping fee elements
+    var shippingCells = document.querySelectorAll('td.shipping_fee, .shipping_fee');
+    
+    shippingCells.forEach(function(cell) {
+        if (isStorePickup) {
+            // Store original shipping fee if not already stored
+            if (!cell.hasAttribute('data-original-fee')) {
+                var originalValue = cell.textContent.trim().replace(/[^\d.]/g, '');
+                originalShippingFee = parseFloat(originalValue) || 0;
+                cell.setAttribute('data-original-fee', originalValue);
+            } else {
+                originalShippingFee = parseFloat(cell.getAttribute('data-original-fee')) || 0;
+            }
             
+            // Set to 0
+            cell.textContent = '0.00';
+            // cell.style.color = '#27ae60';
+            // cell.style.fontWeight = 'bold';
+            shippingUpdated = true;
+            
+            console.log('   ✅ Shipping fee: ' + originalShippingFee + ' → 0.00');
+        } else {
+            // Restore original shipping fee
+            var originalFee = cell.getAttribute('data-original-fee');
+            if (originalFee) {
+                originalShippingFee = parseFloat(originalFee) || 0;
+                cell.textContent = formatNumber(originalShippingFee, cell.textContent.indexOf(',') !== -1);
+                cell.style.color = '';
+                cell.style.fontWeight = '';
+                shippingUpdated = true;
+                
+                console.log('   ✅ Shipping fee restored to:', originalShippingFee);
+            }
+        }
+    });
+    
+    // Backup: Find by label
+    if (!shippingUpdated) {
+        var labels = document.querySelectorAll('td, th, label');
+        
+        for (var i = 0; i < labels.length; i++) {
+            var text = labels[i].textContent.trim().toLowerCase();
+            
+            if (text.indexOf('shipping') !== -1 && (text.indexOf('fee') !== -1 || text.indexOf('charge') !== -1)) {
+                var valueCell = labels[i].nextElementSibling;
+                
+                if (!valueCell) {
+                    valueCell = labels[i].parentElement.nextElementSibling;
+                }
+                
+                if (valueCell) {
+                    if (isStorePickup) {
+                        if (!valueCell.hasAttribute('data-original-fee')) {
+                            var originalValue = valueCell.textContent.trim().replace(/[^\d.]/g, '');
+                            originalShippingFee = parseFloat(originalValue) || 0;
+                            valueCell.setAttribute('data-original-fee', originalValue);
+                        } else {
+                            originalShippingFee = parseFloat(valueCell.getAttribute('data-original-fee')) || 0;
+                        }
+                        
+                        valueCell.textContent = '0.00';
+                        // valueCell.style.color = '#27ae60';
+                        // valueCell.style.fontWeight = 'bold';
+                        shippingUpdated = true;
+                    } else {
+                        var originalFee = valueCell.getAttribute('data-original-fee');
+                        if (originalFee) {
+                            originalShippingFee = parseFloat(originalFee) || 0;
+                            valueCell.textContent = formatNumber(originalShippingFee, valueCell.textContent.indexOf(',') !== -1);
+                            valueCell.style.color = '';
+                            valueCell.style.fontWeight = '';
+                            shippingUpdated = true;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Update shipping input fields
+    var shippingInputs = document.querySelectorAll('input[name*="shipping"], input[id*="shipping"]');
+    
+    shippingInputs.forEach(function(input) {
+        if (isStorePickup) {
+            if (!input.hasAttribute('data-original-fee')) {
+                var originalValue = input.value.replace(/[^\d.]/g, '');
+                originalShippingFee = parseFloat(originalValue) || 0;
+                input.setAttribute('data-original-fee', originalValue);
+            } else {
+                originalShippingFee = parseFloat(input.getAttribute('data-original-fee')) || 0;
+            }
+            
+            input.value = '0.00';
+            input.setAttribute('readonly', 'readonly');
+            // input.style.backgroundColor = '#e8f5e9';
+            // input.style.color = '#27ae60';
+            shippingUpdated = true;
+        } else {
+            var originalFee = input.getAttribute('data-original-fee');
+            if (originalFee) {
+                originalShippingFee = parseFloat(originalFee) || 0;
+                input.value = formatNumber(originalShippingFee, false);
+                input.removeAttribute('readonly');
+                input.style.backgroundColor = '';
+                input.style.color = '';
+                shippingUpdated = true;
+            }
+        }
+    });
+    
+    // ============================================================
+    // STEP 3: CALCULATE NEW TOTAL = SUBTOTAL + SHIPPING
+    // ============================================================
+    
+    var calculatedShipping = isStorePickup ? 0 : originalShippingFee;
+    var newTotal = subtotal + calculatedShipping;
+    
+    console.log('   🧮 Calculation: ' + subtotal + ' + ' + calculatedShipping + ' = ' + newTotal);
+    
+    // ============================================================
+    // STEP 4: UPDATE TOTAL DISPLAY
+    // ============================================================
+    
+    // Method 1: Update <td class="total">
+    var totalCells = document.querySelectorAll('td.total, .total, .grand_total, .grand-total');
+    
+    totalCells.forEach(function(totalCell) {
+        // Skip table headers
+        if (totalCell.tagName === 'TH' || totalCell.closest('thead')) {
+            return;
+        }
+        
+        // Skip if doesn't contain numbers
+        if (!/\d/.test(totalCell.textContent)) {
+            return;
+        }
+        
+        // Check if original had commas
+        var hasCommas = totalCell.textContent.indexOf(',') !== -1;
+        
+        // Update total
+        totalCell.textContent = formatNumber(newTotal, hasCommas);
+        // totalCell.style.color = isStorePickup ? '#27ae60' : '';
+        // totalCell.style.fontWeight = isStorePickup ? 'bold' : '';
+        
+        console.log('   ✅ Total cell updated to:', formatNumber(newTotal, hasCommas));
+    });
+    
+    // Method 2: Update total inputs
+    var totalInputs = document.querySelectorAll('input[name*="total"], input[id*="total"]');
+    
+    totalInputs.forEach(function(input) {
+        // Skip subtotal inputs
+        if (input.name.toLowerCase().indexOf('sub') !== -1) {
+            return;
+        }
+        
+        input.value = newTotal.toFixed(2);
+        // input.style.backgroundColor = isStorePickup ? '#e8f5e9' : '';
+        // input.style.color = isStorePickup ? '#27ae60' : '';
+        
+        console.log('   ✅ Total input updated to:', newTotal.toFixed(2));
+    });
+    
+    // Method 3: Update inline text like "Total: 5,100"
+    var allElements = document.querySelectorAll('span, strong, b, div');
+    
+    for (var j = 0; j < allElements.length; j++) {
+        var elem = allElements[j];
+        var elemText = elem.textContent.trim().toLowerCase();
+        
+        if ((elemText.indexOf('total') !== -1 || elemText.indexOf('grand total') !== -1) && 
+            elemText.indexOf(':') !== -1 &&
+            elemText.indexOf('sub') === -1) {
+            
+            var matches = elem.textContent.match(/[\d,]+\.?\d*/);
+            
+            if (matches && matches[0]) {
+                var hasCommas = matches[0].indexOf(',') !== -1;
+                var formattedTotal = formatNumber(newTotal, hasCommas);
+                
+                elem.textContent = elem.textContent.replace(matches[0], formattedTotal);
+                // elem.style.color = isStorePickup ? '#27ae60' : '';
+                // elem.style.fontWeight = isStorePickup ? 'bold' : '';
+                
+                console.log('   ✅ Inline total updated');
+                break;
+            }
+        }
+    }
+    
+    if (!shippingUpdated) {
+        console.log('   ⚠ Shipping fee element not found');
+    }
+}
+
+/**
+ * Helper: Format number with optional commas
+ */
+function formatNumber(num, withCommas) {
+    var fixed = num.toFixed(2);
+    
+    if (withCommas) {
+        // Add commas: 5100.00 → 5,100.00
+        return fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+    
+    return fixed;
+}
             function initDeliveryDropdown() {
                 var success = injectDeliveryDropdown();
                 if (success) {
